@@ -1,0 +1,139 @@
+#include <xc.h>
+#include <stdio.h>
+
+/*------------------------------------------------------------------
+ Configuration Bits (PIC16F877A)
+------------------------------------------------------------------*/
+#pragma config FOSC = HS        // High Speed Crystal (20 MHz)
+#pragma config WDTE = OFF       // Watchdog Timer Disabled
+#pragma config PWRTE = OFF      // Power-up Timer Disabled
+#pragma config BOREN = OFF      // Brown-out Reset Disabled
+#pragma config LVP = OFF        // Low Voltage Programming Disabled
+#pragma config CPD = OFF        // Data EEPROM Read Protect Disabled
+#pragma config WRT = OFF        // Flash Program Memory Write Enable
+#pragma config CP = OFF         // Code Protect Disabled
+
+#define _XTAL_FREQ 20000000UL   // 20 MHz Crystal Clock Frequency
+
+/*------------------------------------------------------------------
+ Function Prototypes
+------------------------------------------------------------------*/
+void UART_Init(void);
+void UART_SendChar(char c);
+void UART_SendString(const char *s);
+
+void ADC_Init(void);
+unsigned int ADC_Read(unsigned char channel);
+
+/*------------------------------------------------------------------
+ UART Initialization (9600 Baud @ 20 MHz)
+------------------------------------------------------------------*/
+void UART_Init(void)
+{
+    TRISC6 = 1;      // TX pin
+    TRISC7 = 1;      // RX pin
+
+    SPBRG = 129;     // 9600 baud rate calculation for 20MHz (BRGH = 1)
+
+    BRGH = 1;        // High-speed baud rate
+    SYNC = 0;        // Asynchronous mode
+    SPEN = 1;        // Enable serial port pins
+
+    TXEN = 1;        // Enable transmission
+    CREN = 1;        // Enable receiver
+}
+
+/*------------------------------------------------------------------
+ Send One Character
+------------------------------------------------------------------*/
+void UART_SendChar(char c)
+{
+    while(TXIF == 0); // Wait until transmit buffer is empty
+
+    TXREG = c;
+}
+
+/*------------------------------------------------------------------
+ Send String
+------------------------------------------------------------------*/
+void UART_SendString(const char *s)
+{
+    while(*s)
+    {
+        UART_SendChar(*s++);
+    }
+}
+
+/*------------------------------------------------------------------
+ ADC Initialization
+------------------------------------------------------------------*/
+void ADC_Init(void)
+{
+    TRISA0 = 1;      // Set AN0 (RA0) as input pin
+
+    /*
+     * ADFM = 1    -> Right justified (10-bit result stored in ADRESH:ADRESL)
+     * PCFG = 1110 -> AN0 is Analog, AN1-AN7 are Digital (VREF = VDD/VSS)
+     */
+    ADCON1 = 0b10001110;
+
+    /*
+     * ADCS1:ADCS0 = 10 -> Clock selection Fosc/32 (required for 20MHz crystal)
+     * CHS2:CHS0   = 000 -> Default Channel 0 (AN0)
+     * ADON        = 1   -> Enable ADC module
+     */
+    ADCON0 = 0b10000001;
+}
+
+/*------------------------------------------------------------------
+ ADC Read Function
+------------------------------------------------------------------*/
+unsigned int ADC_Read(unsigned char channel)
+{
+    unsigned int result;
+
+    // Clear existing channel selection bits (CHS2:CHS0 are bits 5, 4, and 3)
+    // 0xC7 = 0b11000111 (retains ADCS bits and ADON bit while clearing CHS)
+    ADCON0 &= 0xC7;                 
+    
+    // Set desired channel bits
+    ADCON0 |= (channel << 3);       
+
+    __delay_us(20);                 // Acquisition delay (allows capacitor to charge)
+
+    GO_DONE = 1;                    // Start ADC conversion
+
+    while(GO_DONE);                 // Wait for conversion to finish (GO_DONE goes to 0)
+
+    // Combine 10-bit right-justified result
+    result = ((unsigned int)ADRESH << 8) | ADRESL;
+
+    return result;
+}
+
+/*------------------------------------------------------------------
+ Main Program
+------------------------------------------------------------------*/
+void main(void)
+{
+    unsigned int adcValue;
+    char uartBuffer[30];
+
+    UART_Init();
+    ADC_Init();
+
+    UART_SendString("\r\nADC Started\r\n");
+
+    while(1)
+    {
+        adcValue = ADC_Read(0);     // Read analog channel 0 (AN0)
+
+        sprintf(uartBuffer,
+                "ADC Value = %u\r\n",
+                adcValue);
+
+        UART_SendString(uartBuffer);
+
+        __delay_ms(500);            // 500ms sampling delay
+    }
+}
